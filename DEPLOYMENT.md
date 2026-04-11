@@ -3,6 +3,32 @@
 Deployment instructions for the pedestrian-aware velocity planning module
 on the nUWAy campus shuttle bus (Nvidia Orin, ARM64).
 
+## Quick Reference (copy-paste)
+
+```bash
+# On the Orin (outside container)
+cd /home/nvidia/Workspace/nUWAy_autoware_ws
+git checkout -b harry/crowd-matching
+cd src
+git clone https://github.com/HTOLCH/autoware_crowd_matching_module.git autoware_behavior_velocity_sfm_module
+cd ..
+git add src/autoware_behavior_velocity_sfm_module/
+git commit -m "Add crowd-matching velocity planning module"
+git push -u origin harry/crowd-matching
+
+# Start the container (check IMAGE/TAG env vars or .env file first)
+cd /home/nvidia/Workspace/autoware_on_nUWAy
+docker compose up -d
+docker exec -it devel_container bash
+
+# Inside container — build, deploy, launch
+cd /workspace
+colcon build --packages-select autoware_behavior_velocity_sfm_module
+source /workspace/install/setup.bash
+/workspace/src/autoware_behavior_velocity_sfm_module/scripts/deploy_sfm.sh enable
+ros2 launch autoware_launch autoware.launch.xml data_path:=/autoware_data map_path:=/autoware_map
+```
+
 ## Architecture Overview
 
 ```
@@ -72,19 +98,23 @@ those files in a patched state.
 
 ### 4. Start the container
 
+The compose.yaml uses `${IMAGE}:${TAG}` for the Docker image. Check that these
+env vars are set (or that an `.env` file exists) before starting. Ask Lee if unsure
+which image is on the Orin. You can check with `docker images`.
+
 ```bash
 cd /home/nvidia/Workspace/autoware_on_nUWAy
 docker compose up -d
 docker exec -it devel_container bash
 ```
 
+The container entrypoint (`ros_entrypoint.sh`) automatically sources ROS Humble,
+Autoware, and the workspace install, so build tools and dependencies are available
+immediately.
+
 ### 5. Build the module
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /opt/autoware/setup.bash
-source /workspace/install/setup.bash
-
 cd /workspace
 colcon build --packages-select autoware_behavior_velocity_sfm_module
 source /workspace/install/setup.bash
