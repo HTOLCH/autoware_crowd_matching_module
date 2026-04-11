@@ -189,6 +189,86 @@ Check the module's live output:
 cat /tmp/cm_target.csv
 ```
 
+## Collecting Test Data
+
+### First test (validation run)
+
+The goal is to confirm it builds, deploys, and doesn't crash. Run these in a
+second terminal inside the container while the bus is driving.
+
+**1. Record a rosbag:**
+```bash
+ros2 bag record -o /workspace/rosbags/bus_test_$(date +%Y%m%d_%H%M%S) \
+    /vehicle/status/velocity_status \
+    /localization/kinematic_state \
+    /perception/object_recognition/objects \
+    /planning/scenario_planning/trajectory
+```
+
+**2. Check the module loaded:**
+```bash
+ros2 topic echo /rosout --once | grep -i "crowd-matching"
+```
+
+**3. Check pedestrians are being detected:**
+```bash
+ros2 topic echo /perception/object_recognition/objects --once | grep -c "label: 7"
+```
+Label 7 = PEDESTRIAN. If this returns 0, the perception pipeline is not
+classifying pedestrians. Check LiDAR data and detection model.
+
+**4. Watch the module's live decisions:**
+```bash
+tail -f /tmp/cm_target.csv
+```
+Columns: time, target velocity, raw target, co_flow count, min_front distance.
+If co_flow stays at 0, the module is not detecting co-flow pedestrians.
+
+**5. Screen record** RViz with your phone as visual evidence for the thesis.
+
+**6. Note down on your phone:**
+- Did Autoware start without errors?
+- Did the module load? (rosout message)
+- Were pedestrians detected with PEDESTRIAN labels?
+- Did the bus slow for pedestrians or hard-stop?
+- Any crashes or unexpected behaviour?
+
+### Controlled test (next session)
+
+Once the basics work, do a proper comparative run:
+
+**Run 1 — Module enabled (Config D):**
+```bash
+ros2 bag record -o /workspace/rosbags/bus_crowd_match_$(date +%Y%m%d_%H%M%S) \
+    /vehicle/status/velocity_status \
+    /localization/kinematic_state \
+    /perception/object_recognition/objects \
+    /planning/scenario_planning/trajectory
+```
+Drive the shared pathway stretch. Copy `/tmp/cm_target.csv` off the container
+after the run:
+```bash
+docker cp devel_container:/tmp/cm_target.csv ~/bus_cm_target_enabled.csv
+```
+
+**Run 2 — Module disabled (stock/campus-tuned baseline):**
+```bash
+/workspace/src/autoware_behavior_velocity_sfm_module/scripts/deploy_sfm.sh disable
+# Restart Autoware, record another rosbag on the same stretch
+```
+
+**Analyse on desktop later:**
+```bash
+# Copy rosbags from the bus
+scp -r nvidia@<bus-ip>:/home/nvidia/Workspace/nUWAy_autoware_ws/rosbags/ ~/bus_rosbags/
+
+# Run analysis (inside sim container on desktop)
+docker exec simulation_container python3 \
+    /workspace/src/autoware_behavior_velocity_sfm_module/scripts/analyze_results.py \
+    --bag-dir /workspace/rosbags/bus_test
+```
+The analysis script works on any rosbag with the 4 topics above, sim or real.
+
 ## Sensors and CAN
 
 These are handled by the standard Autoware launch. No extra steps needed.
