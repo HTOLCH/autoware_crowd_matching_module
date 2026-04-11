@@ -1,0 +1,42 @@
+/**:
+  ros__parameters:
+    sfm:
+      # Algorithm mode: "crowd_matching" (default) or "classical" (Helbing repulsive force)
+      mode: "crowd_matching"
+
+      # Target velocity when no crowd nearby
+      desired_velocity: 1.39        # m/s (5 km/h — lanelet speed_limit is in km/h)
+
+      # Smoothing — velocity convergence time constant
+      relaxation_time: 2.0          # seconds (balance: smooth but recovers faster from dips)
+
+      # Geometry
+      pedestrian_radius: 0.3        # meters
+      vehicle_half_width: 1.2       # meters (nUWAy bus half-width)
+
+      # Velocity limits
+      min_velocity: 0.0             # m/s (allow full stop)
+
+      # Detection
+      detection_radius: 15.0        # meters — only consider pedestrians within this range
+
+      # Collision avoidance — proximity attenuation for pedestrians directly in front
+      braking_distance: 10.0        # meters — distance at which following adjustment begins
+      min_clearance: 3.0            # meters — module targets zero velocity at this distance
+
+      # Crowd matching — match forward speed of co-flow pedestrians
+      co_flow_threshold: 0.3        # m/s — min ped forward speed to count as co-flow
+      min_crowd_size: 1             # min co-flow pedestrians to trigger crowd matching
+      crowd_hold_time: 1.5          # seconds — hold crowd speed briefly after crowd disappears
+
+      # Classical parameters (Helbing & Molnar 1995) — only used when mode=classical
+      interaction_strength: 2.1     # A parameter — force magnitude coefficient
+      interaction_range: 0.3        # B parameter — exponential decay scale (meters)
+      safety_buffer_k: 2.0          # speed-proportional buffer: buffer = k * ego_velocity
+      force_saturation: 10.0        # force at which velocity -> 0
+
+      # PID following controller — only used when mode=crowd_matching_pid
+      pid_desired_distance: 5.0     # meters — target following gap
+      pid_kp: 0.15                  # proportional gain
+      pid_ki: 0.02                  # integral gain
+      pid_kd: 0.05                  # derivative gain

@@ -1,0 +1,64 @@
+# STOCK Autoware road_user_stop parameters (nuway defaults).
+# Config A: Baseline — demonstrates that stock Autoware cannot navigate campus shared pathway.
+# default_margin=5.0m, minimum_margin=3.0m
+/**:
+  ros__parameters:
+    road_user_stop:
+      option:
+        suppress_sudden_stop: true
+
+      stop_planning:
+        longitudinal_margin:
+          default_margin: 5.0 # [m] STOCK
+          terminal_margin: 3.0 # [m] STOCK
+          minimum_margin: 3.0 # [m] STOCK
+
+        opposing_traffic:
+          stop_margin: 10.0 # [m] STOCK
+          max_negative_velocity: -0.1
+          min_velocity_for_stop_planning: 2.77
+          effective_deceleration: 4.0
+
+        hold_stop_velocity_threshold: 0.01
+        hold_stop_distance_threshold: 0.3
+
+        stop_on_curve:
+          enable_approaching: false
+          additional_stop_margin: 3.0 # [m] STOCK
+          min_stop_margin: 6.0 # [m] STOCK
+
+        limit_min_acc: -2.5
+        sudden_object_acc_threshold: -1.0
+        sudden_object_dist_threshold: 1000.0
+        abandon_to_stop: false
+
+      obstacle_filtering:
+        object_type:
+          pedestrian: true
+          bicycle: true
+          motorcycle: false
+          unknown: false
+
+        trajectory_lateral_margin: 1.0 # [m] STOCK
+
+        opposing_traffic_detection:
+          enable: true
+          angle_threshold: 150.0
+          min_speed_threshold: 0.5
+
+        intersection:
+          exclude: false
+        crosswalk:
+          exclude: true
+          margin: 1.0
+
+        min_detection_duration: 0.1 # [s] STOCK
+        lost_object_retention_duration: 2.0 # [s] STOCK
+
+        polygon_expansion_length: 0.5 # [m] STOCK
+
+      stopped_object_tracking:
+        stopped_velocity_threshold: 0.5
+        stopped_position_tolerance: 0.3
+        ego_reached_wall_distance_threshold: 0.5
+        stopped_duration_after_ego_arrival: 3.0 # [s] STOCK

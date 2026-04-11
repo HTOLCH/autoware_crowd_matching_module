@@ -1,0 +1,14 @@
+# CAMPUS-TUNED + crowd-matching dynamic_obstacle_stop parameters.
+# Config C: Crowd-matching module handles pedestrian interaction — minimise dynamic stop interference.
+/**:
+  ros__parameters:
+    dynamic_obstacle_stop:
+      extra_object_width: 0.0  # [m] TUNED: was 1.0 — no extra width, crowd-matching module handles proximity
+      minimum_object_velocity: 0.5  # [m/s] objects below this velocity are ignored
+      stop_distance_buffer: 0.3  # [m] TUNED: was 0.5
+      time_horizon: 1.0  # [s] TUNED: was 5.0 — shorter horizon, crowd-matching module handles anticipation
+      hysteresis: 0.5  # [m] TUNED: was 1.0
+      add_stop_duration_buffer: 1.0  # [s] TUNED: was 0.5 — require longer detection before stopping
+      remove_stop_duration_buffer: 0.5  # [s] TUNED: was 1.0 — faster recovery
+      minimum_object_distance_from_ego_trajectory: 0.0  # [m] TUNED: was 1.0 — only stop for objects ON the trajectory
+      ignore_unavoidable_collisions: true
