@@ -13,3 +13,4 @@
     min_z: 0.3     # drop points within 30 cm of base_link (ground)
     max_z: 2.0     # drop points above 2 m (sky / overhanging foliage)
     negative: false
+    processing_time_threshold_sec: 0.05

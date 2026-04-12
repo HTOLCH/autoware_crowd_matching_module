@@ -16,6 +16,13 @@
 #   /workspace/src/autoware_behavior_velocity_sfm_module/scripts/launch_sfm_test.sh [stock|campus_tuned|campus_tuned_sfm]
 #
 # Default: campus_tuned_sfm
+#
+# Env-var modes (override defaults):
+#   LOCALIZATION_MODE=ndt|gt          (default ndt — uses real NDT scan matching;
+#                                       gt falls back to ground_truth_relay.py)
+#   PERCEPTION_MODE=cuda|minimal|none (default cuda — uses perception_cuda container;
+#                                       minimal runs perception_minimal + object_relay
+#                                       in this container; none disables both)
 
 set -e
 
@@ -40,6 +47,29 @@ case "$CONFIG" in
         ;;
 esac
 
+# === Localization mode (ndt | gt) ===
+LOCALIZATION_MODE="${LOCALIZATION_MODE:-ndt}"
+case "$LOCALIZATION_MODE" in
+    ndt) LOC_LAUNCH_FLAG="true";  USE_GT_RELAY=0 ;;
+    gt)  LOC_LAUNCH_FLAG="false"; USE_GT_RELAY=1 ;;
+    *)
+        echo "ERROR: LOCALIZATION_MODE must be 'ndt' or 'gt' (got: $LOCALIZATION_MODE)"
+        exit 1
+        ;;
+esac
+
+# === Perception mode (cuda | minimal | none) ===
+PERCEPTION_MODE="${PERCEPTION_MODE:-cuda}"
+case "$PERCEPTION_MODE" in
+    cuda)    USE_OBJECT_RELAY=0; USE_PERCEPTION_MINIMAL=0 ;;
+    minimal) USE_OBJECT_RELAY=1; USE_PERCEPTION_MINIMAL=1 ;;
+    none)    USE_OBJECT_RELAY=0; USE_PERCEPTION_MINIMAL=0 ;;
+    *)
+        echo "ERROR: PERCEPTION_MODE must be 'cuda', 'minimal', or 'none' (got: $PERCEPTION_MODE)"
+        exit 1
+        ;;
+esac
+
 MAP_PATH="/autoware_map_sfm"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/configs/$CONFIG"
@@ -48,6 +78,7 @@ MOTION_DIR="/workspace/install/autoware_launch/share/autoware_launch/config/plan
 
 echo "============================================"
 echo "  Crowd-Matching Test Launcher — Config: $CONFIG"
+echo "  Localization: $LOCALIZATION_MODE   Perception: $PERCEPTION_MODE"
 echo "============================================"
 
 case "$CONFIG" in
@@ -180,22 +211,61 @@ cp "$SURROUND_DIR/surround_obstacle_checker.param.yaml" "$SURROUND_DIR/surround_
 cp "$SCRIPT_DIR/surround_obstacle_checker.param.yaml" "$SURROUND_DIR/surround_obstacle_checker.param.yaml"
 echo "    Surround obstacle checker: pedestrian/bicycle departure check disabled"
 
-# 6. Start ground truth relay in background
-echo "[6] Starting ground truth localization relay..."
-python3 "$SCRIPT_DIR/ground_truth_relay.py" &
-RELAY_PID=$!
-echo "    Relay PID: $RELAY_PID"
+# 6. Start ground truth relay (only if LOCALIZATION_MODE=gt; in ndt mode the real
+#    NDT scan matcher provides /localization/kinematic_state from the baked
+#    pointcloud_map.pcd against AWSIM's LiDAR returns).
+RELAY_PID=""
+if [ "$USE_GT_RELAY" = "1" ]; then
+    echo "[6] Starting ground truth localization relay (LOCALIZATION_MODE=gt)..."
+    python3 "$SCRIPT_DIR/ground_truth_relay.py" &
+    RELAY_PID=$!
+    echo "    Relay PID: $RELAY_PID"
+else
+    echo "[6] Skipping ground truth relay (LOCALIZATION_MODE=ndt — using real NDT)"
+fi
 
-# 7. Start object detection relay (promotes clustering to PEDESTRIAN PredictedObjects)
-echo "[7] Starting object detection relay..."
-python3 "$SCRIPT_DIR/object_relay.py" &
-OBJ_RELAY_PID=$!
-echo "    Object relay PID: $OBJ_RELAY_PID"
+# 7. Start object detection relay + perception_minimal (only in PERCEPTION_MODE=minimal;
+#    in cuda mode the perception_cuda container publishes /perception/object_recognition/objects
+#    directly via CenterPoint; in none mode no object detection runs).
+OBJ_RELAY_PID=""
+PERCEPTION_MIN_PID=""
+if [ "$USE_PERCEPTION_MINIMAL" = "1" ]; then
+    echo "[7a] Starting perception_minimal pipeline (PERCEPTION_MODE=minimal)..."
+    ros2 launch autoware_behavior_velocity_sfm_module perception_minimal.launch.xml \
+        input_pointcloud:=/sensing/lidar/front/pointcloud_raw_ex &
+    PERCEPTION_MIN_PID=$!
+    echo "    perception_minimal PID: $PERCEPTION_MIN_PID"
+fi
+if [ "$USE_OBJECT_RELAY" = "1" ]; then
+    echo "[7b] Starting object detection relay..."
+    python3 "$SCRIPT_DIR/object_relay.py" &
+    OBJ_RELAY_PID=$!
+    echo "    Object relay PID: $OBJ_RELAY_PID"
+else
+    echo "[7] Skipping in-container perception ($PERCEPTION_MODE mode — perception comes from elsewhere)"
+fi
 
 # Give relays a moment to start
 sleep 1
 
-# 7b. Set rviz view to TopDownOrtho with base_link target frame
+# 7c. Concatenated-pointcloud relay (sim only).
+# AWSIM publishes /sensing/lidar/{front,rear}/pointcloud_raw_ex but no
+# /sensing/lidar/concatenated/pointcloud — the nuway_sensor_kit concat node
+# can't load because launch_sensing_driver=false skips creating its target
+# container. Both real NDT and the perception_cuda container need the
+# concatenated topic, so we forward the front lidar (sim landmarks are
+# placed in front of the bus). Skipped when both layers use fallbacks.
+CONCAT_RELAY_PID=""
+if [ "$LOCALIZATION_MODE" = "ndt" ] || [ "$PERCEPTION_MODE" = "cuda" ]; then
+    echo "[7c] Starting front-lidar -> concatenated/pointcloud relay..."
+    ros2 run topic_tools relay \
+        /sensing/lidar/front/pointcloud_raw_ex \
+        /sensing/lidar/concatenated/pointcloud &
+    CONCAT_RELAY_PID=$!
+    echo "    Concat relay PID: $CONCAT_RELAY_PID"
+fi
+
+# 7d. Set rviz view to TopDownOrtho with base_link target frame
 RVIZ_FILE="/workspace/install/autoware_launch/share/autoware_launch/rviz/autoware.rviz"
 if [ -f "$RVIZ_FILE" ]; then
     sed -i 's/Target Frame: viewer/Target Frame: base_link/' "$RVIZ_FILE"
@@ -206,8 +276,20 @@ fi
 echo "[8] Setting post-launch params (will apply once controller starts)..."
 (sleep 20 && ros2 param set /control/trajectory_follower/controller_node_exe enable_keep_stopped_until_steer_convergence false 2>/dev/null && echo "    Steering convergence check disabled") &
 
+# 8b. Initial-pose hint for NDT (ndt mode only). The EgoVehicle spawns at Unity
+# (-1.68, 0, 0) which maps to ROS (0.0, 1.68, 0.0) modulo MgrsPosition offset.
+# Override via INITIAL_POSE_X/Y/YAW env vars if Harry's MapOrigin is non-zero.
+if [ "$LOCALIZATION_MODE" = "ndt" ]; then
+    INITIAL_POSE_X="${INITIAL_POSE_X:-0.0}"
+    INITIAL_POSE_Y="${INITIAL_POSE_Y:-1.68}"
+    INITIAL_POSE_YAW="${INITIAL_POSE_YAW:-0.0}"
+    echo "[8b] Will publish /initialpose at ($INITIAL_POSE_X, $INITIAL_POSE_Y) yaw=$INITIAL_POSE_YAW after Autoware starts..."
+    (sleep 25 && ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+        "{header: {frame_id: 'map'}, pose: {pose: {position: {x: $INITIAL_POSE_X, y: $INITIAL_POSE_Y, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: $(python3 -c "import math; print(math.sin($INITIAL_POSE_YAW/2))"), w: $(python3 -c "import math; print(math.cos($INITIAL_POSE_YAW/2))")}}, covariance: [0.25, 0, 0, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 0, 0, 0.06853892326654787, 0, 0, 0, 0, 0, 0, 0.06853892326654787, 0, 0, 0, 0, 0, 0, 0.06853892326654787, 0, 0, 0, 0, 0, 0, 0.06853892326654787]}}" 2>/dev/null && echo "    /initialpose published") &
+fi
+
 # 9. Launch Autoware
-echo "[9] Launching Autoware ($CONFIG)..."
+echo "[9] Launching Autoware ($CONFIG, localization=$LOCALIZATION_MODE)..."
 echo ""
 ros2 launch autoware_launch nuway_simulator.launch.xml \
     vehicle_model:=nuway_vehicle \
@@ -215,15 +297,17 @@ ros2 launch autoware_launch nuway_simulator.launch.xml \
     map_path:=$MAP_PATH \
     data_path:=/autoware_data \
     use_sim_time:=true \
-    localization:=false \
+    localization:=$LOC_LAUNCH_FLAG \
     perception:=false \
     rviz:=true
 
 # === Cleanup ===
 echo ""
 echo "Shutting down..."
-kill $RELAY_PID 2>/dev/null || true
-kill $OBJ_RELAY_PID 2>/dev/null || true
+[ -n "$RELAY_PID" ]          && kill $RELAY_PID 2>/dev/null || true
+[ -n "$OBJ_RELAY_PID" ]      && kill $OBJ_RELAY_PID 2>/dev/null || true
+[ -n "$PERCEPTION_MIN_PID" ] && kill $PERCEPTION_MIN_PID 2>/dev/null || true
+[ -n "$CONCAT_RELAY_PID" ]   && kill $CONCAT_RELAY_PID 2>/dev/null || true
 # Restore original configs
 if [ -f "$DIAG_DIR/autoware-awsim.yaml.bak" ]; then
     mv "$DIAG_DIR/autoware-awsim.yaml.bak" "$DIAG_DIR/autoware-awsim.yaml"

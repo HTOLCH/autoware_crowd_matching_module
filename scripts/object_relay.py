@@ -67,9 +67,9 @@ class ObjectRelay(Node):
         # Tracking state: list of {pos: (mx, my), vel: (vx, vy), age: int}
         self.prev_tracks = []
         self.prev_stamp = None
-        self.match_threshold = 1.0   # max distance (m) to match between frames
-        self.vel_alpha = 0.4         # EMA smoothing for velocity (0-1, lower = smoother)
-        self.min_track_age = 3       # frames before velocity is published (lets EMA converge)
+        self.match_threshold = 2.0   # max distance (m) — voxel clustering can shift centroids ~0.3m
+        self.vel_alpha = 0.5         # EMA smoothing for velocity (0-1, lower = smoother)
+        self.min_track_age = 1       # frames before velocity is published
 
         # Throttled filter stats
         self.kept_count = 0
