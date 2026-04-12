@@ -25,6 +25,16 @@
   <depend>rclcpp</depend>
   <depend>visualization_msgs</depend>
 
+  <!-- Runtime-only deps for the bus minimum-perception launch
+       (perception_minimal.launch.xml). Not used by the C++ planner plugin. -->
+  <exec_depend>autoware_pointcloud_preprocessor</exec_depend>
+  <exec_depend>autoware_euclidean_cluster</exec_depend>
+  <exec_depend>autoware_detected_object_feature_remover</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
+  <exec_depend>autoware_planning_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>autoware_lint_common</test_depend>
 

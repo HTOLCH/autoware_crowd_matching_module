@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!--
+  Minimum-viable perception pipeline for crowd-matching module bus PoC.
+
+  Pipeline:
+    raw lidar pointcloud
+      -> CropBoxFilter (drop ground/sky, retain base_link box)
+      -> VoxelGridBasedEuclideanClusterNode (clusters with feature)
+      -> DetectedObjectFeatureRemover (strip features -> DetectedObjects)
+      -> object_relay.py (corridor filter + tracking + PEDESTRIAN tagging)
+      -> /perception/object_recognition/objects (consumed by crowd-matching module)
+
+  This is intentionally lightweight: no ML detection, no map-based filters, no
+  multi-object tracker. Designed to bring up pedestrian awareness on the bus
+  when the full Autoware perception stack is unavailable.
+
+  Args:
+    input_pointcloud: raw concatenated lidar topic (verify exact name on bus)
+    container_name:   name of the composable node container
+-->
+<launch>
+  <arg name="input_pointcloud" default="/sensing/lidar/concatenated/pointcloud"
+       description="raw concatenated lidar pointcloud (verify on bus with: ros2 topic list | grep sensing/lidar)"/>
+  <arg name="container_name" default="cm_perception_container"/>
+
+  <arg name="cropbox_param_path"
+       default="$(find-pkg-share autoware_behavior_velocity_sfm_module)/config/perception_minimal/ground_cropbox.param.yaml"/>
+  <arg name="cluster_param_path"
+       default="$(find-pkg-share autoware_behavior_velocity_sfm_module)/config/perception_minimal/voxel_grid_based_euclidean_cluster.param.yaml"/>
+
+  <!-- Composable container hosting the crop + cluster components -->
+  <node_container pkg="rclcpp_components" exec="component_container_mt"
+                  name="$(var container_name)" namespace="" output="screen">
+
+    <!-- Stage 1: drop ground + sky points via base_link-frame crop box -->
+    <composable_node pkg="autoware_pointcloud_preprocessor"
+                     plugin="autoware::pointcloud_preprocessor::CropBoxFilterComponent"
+                     name="cm_ground_cropbox">
+      <param from="$(var cropbox_param_path)"/>
+      <remap from="input"  to="$(var input_pointcloud)"/>
+      <remap from="output" to="/perception/obstacle_segmentation/pointcloud"/>
+    </composable_node>
+
+    <!-- Stage 2: cluster cropped pointcloud into DetectedObjectsWithFeature -->
+    <composable_node pkg="autoware_euclidean_cluster"
+                     plugin="autoware::euclidean_cluster::VoxelGridBasedEuclideanClusterNode"
+                     name="cm_voxel_euclidean_cluster">
+      <param from="$(var cluster_param_path)"/>
+      <remap from="input"  to="/perception/obstacle_segmentation/pointcloud"/>
+      <remap from="output" to="/perception/object_recognition/detection/clustering/clusters_with_feature"/>
+    </composable_node>
+  </node_container>
+
+  <!-- Stage 3: strip features -> autoware_perception_msgs/DetectedObjects -->
+  <node pkg="autoware_detected_object_feature_remover"
+        exec="detected_object_feature_remover_node"
+        name="cm_feature_remover" output="screen">
+    <remap from="~/input"  to="/perception/object_recognition/detection/clustering/clusters_with_feature"/>
+    <remap from="~/output" to="/perception/object_recognition/detection/clustering/objects"/>
+  </node>
+
+  <!-- Stage 4: object_relay.py (run separately via deploy_perception.sh).
+       Kept out of this launch so it can be restarted independently and so its
+       Python stdout (filter stats) stays on a dedicated terminal. -->
+</launch>

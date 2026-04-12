@@ -27,6 +27,10 @@ colcon build --packages-select autoware_behavior_velocity_sfm_module
 source /workspace/install/setup.bash
 /workspace/src/autoware_behavior_velocity_sfm_module/scripts/deploy_sfm.sh enable
 ros2 launch autoware_launch autoware.launch.xml data_path:=/autoware_data map_path:=/autoware_map
+
+# OPTIONAL — only if the bus's full perception stack is broken/unavailable.
+# Run in a second shell inside the container after Autoware has come up:
+/workspace/src/autoware_behavior_velocity_sfm_module/scripts/deploy_perception.sh start
 ```
 
 ## Architecture Overview
@@ -168,9 +172,13 @@ Or use the alias:
 autolaunch
 ```
 
-No relay scripts are needed on the bus. The real perception pipeline
-(LiDAR detection, multi-object tracker, map-based prediction) publishes
-pedestrians to the same topic the module reads from.
+If the bus's full perception stack is running, no relay scripts are needed —
+the real perception pipeline (LiDAR detection, multi-object tracker, map-based
+prediction) publishes pedestrians to the same topic the module reads from.
+
+If the full perception stack is broken or unavailable on the bus, use the
+minimum perception fallback — see [Bus Perception Fallback](#bus-perception-fallback)
+below.
 
 ### 9. Verify the module is running
 
@@ -268,6 +276,139 @@ docker exec simulation_container python3 \
     --bag-dir /workspace/rosbags/bus_test
 ```
 The analysis script works on any rosbag with the 4 topics above, sim or real.
+
+## Bus Perception Fallback
+
+When the full Autoware perception stack (CenterPoint ML detection, multi-object
+tracker, map-based prediction) is not running on the bus, the crowd-matching
+module receives nothing on `/perception/object_recognition/objects` and cannot
+react to pedestrians. This section brings up a minimum perception layer that
+mirrors the simulation approach: rule-based LiDAR clustering plus the
+`object_relay.py` script that promotes clusters to PEDESTRIAN-classified
+`PredictedObjects`.
+
+### Pipeline
+
+```
+raw lidar (Velodyne VLP16)
+   -> CropBoxFilter        (drop ground + sky points)
+   -> EuclideanCluster     (voxel-grid based, no ML, no GPU)
+   -> FeatureRemover       (tier4 -> autoware_perception_msgs)
+   -> object_relay.py      (corridor filter + PEDESTRIAN tagging)
+   -> /perception/object_recognition/objects  --> crowd-matching module
+```
+
+Localization is NOT touched; the bus's own GNSS/INS continues to feed
+`/localization/kinematic_state`. Only the perception side is replaced.
+
+### Pre-flight checks (run inside container BEFORE starting the fallback)
+
+```bash
+# (a) Raw lidar alive?
+ros2 topic list | grep sensing/lidar
+ros2 topic hz /sensing/lidar/concatenated/pointcloud   # default; verify on bus
+
+# (b) Localization alive? (required for base_link -> map transform in the relay)
+ros2 topic hz /localization/kinematic_state            # expect ~50 Hz
+
+# (c) Planner trajectory alive? (required for the corridor filter)
+ros2 topic hz /planning/scenario_planning/trajectory   # expect ~10 Hz
+```
+
+If (a) is missing the fallback cannot run — escalate to Lee. If (c) is missing
+the corridor filter auto-falls-back to pass-through (every cluster becomes a
+"pedestrian"), and the bus will conservatively slow for any obstacle until the
+trajectory comes back. The relay logs a throttled warning when this happens.
+
+### Start
+
+```bash
+# After deploy_sfm.sh enable and Autoware launch, in a separate container shell:
+/workspace/src/autoware_behavior_velocity_sfm_module/scripts/deploy_perception.sh start
+```
+
+The script starts a composable container (crop + cluster + feature remover)
+and `object_relay.py`. Logs go to `/tmp/cm_perception.log` and
+`/tmp/cm_object_relay.log`. PIDs stored in `/tmp/cm_perception.pids`.
+
+Optional environment overrides:
+```bash
+CM_LIDAR_TOPIC=/sensing/lidar/top/pointcloud_raw_ex \
+CM_CORRIDOR_WIDTH=2.5 \
+CM_MAX_FORWARD=20.0 \
+    deploy_perception.sh start
+```
+
+### Verify
+
+```bash
+deploy_perception.sh status
+```
+
+Should report all four topics with non-zero Hz:
+- `/sensing/lidar/concatenated/pointcloud`              (sensor)
+- `/perception/obstacle_segmentation/pointcloud`        (after crop)
+- `/perception/object_recognition/detection/clustering/objects`  (after cluster + remover)
+- `/perception/object_recognition/objects`              (after relay; PEDESTRIAN PredictedObjects)
+
+Watch the relay's filter stats:
+```bash
+tail -f /tmp/cm_object_relay.log
+```
+Each second it prints `kept N, corridor-reject N, forward-reject N, ground-reject N`
+(or a `corridor filter DISABLED` warning if no trajectory has been received).
+
+### Walk-test
+
+1. Drive onto a stretch of shared pathway with the module enabled and the
+   fallback perception running.
+2. Have someone walk inside the planned trajectory corridor (~2 m strip ahead
+   of the bus). The relay's `kept` count should rise above zero.
+3. `tail -f /tmp/cm_target.csv` — `co_flow` should go above zero, `target`
+   should drop from 1.39 m/s towards crowd speed (~1.0-1.2 m/s).
+4. Then have the same person step OUTSIDE the corridor (e.g. next to a wall
+   2 m off the path). The cluster should now be `corridor-reject`-ed and the
+   bus should NOT slow down for them.
+
+### Stop
+
+```bash
+deploy_perception.sh stop
+```
+
+Cleans up the launch, the relay, and any straggling composable container
+processes. After stopping you can switch back to the full perception stack
+(if/when Lee fixes it) without any other changes — the crowd-matching module
+itself doesn't care which producer publishes the PedestrianObjects.
+
+### Known PoC Limitations
+
+- **Stationary objects:** clusters with zero velocity (people standing still,
+  dogs, kids in the corridor) WILL slow the bus down via proximity attenuation.
+  This is the desired behaviour for safety, but means the bus will also slow
+  for any cluster mistaken as pedestrian inside the corridor.
+- **No real classifier:** every kept cluster is tagged as PEDESTRIAN. The
+  corridor filter is the only thing keeping the bus from treating walls and
+  parked cars as pedestrians, so trajectories must be reliable.
+- **No real tracker:** velocity estimates come from a single-frame
+  nearest-neighbour matcher with EMA smoothing. Acceptable for slow campus
+  speeds but noisier than the real Autoware multi-object tracker.
+- **Single corridor width:** does not currently widen the corridor at curves
+  or intersections.
+
+### Recommended rosbag topics (fallback runs)
+
+In addition to the four planning/perception topics already in DEPLOYMENT.md's
+validation run, also record:
+
+```
+/perception/object_recognition/detection/clustering/objects   # pre-relay clusters
+/perception/object_recognition/objects                         # post-relay (what module sees)
+/planning/scenario_planning/trajectory                         # corridor reference
+```
+
+These let you post-mortem any "why did the bus slow / why didn't it slow"
+question.
 
 ## Sensors and CAN
 
@@ -393,3 +534,7 @@ instead of CycloneDDS. Check with Lee whether this matters.
 | patch_behavior_planning.sh | Patches Autoware launch XML for crowd-matching plugin |
 | config/sfm.param.yaml | Module parameters (mode, detection_radius, braking_distance, etc.) |
 | configs/campus_tuned_sfm/ | Campus-tuned Autoware configs installed by deploy script |
+| deploy_perception.sh | Bus PoC: start/stop/status for the minimum perception fallback |
+| launch/perception_minimal.launch.xml | Crop + euclidean cluster + feature remover composable pipeline |
+| config/perception_minimal/ | Param files for the cropbox and voxel-grid clustering nodes |
+| scripts/object_relay.py | Cluster -> PEDESTRIAN PredictedObjects, with trajectory corridor filter |

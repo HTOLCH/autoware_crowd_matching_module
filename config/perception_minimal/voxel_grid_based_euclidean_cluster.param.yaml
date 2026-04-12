@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    tolerance: 0.7
+    voxel_leaf_size: 0.3
+    min_points_number_per_voxel: 1
+    min_cluster_size: 10
+    max_cluster_size: 3000
+    max_voxel_cluster_for_output: 800
+    min_voxel_cluster_size_for_filtering: 65
+    max_points_per_voxel_in_large_cluster: 10
+    use_height: false
+    input_frame: "base_link"
+
+    # Crop box (built into voxel-grid clustering): retain points only in this box (base_link frame)
+    max_x: 30.0    # forward search distance (m). object_relay max_forward_distance defaults to 25 m, leave headroom
+    min_x: -5.0    # short tail behind the bus
+    max_y: 8.0
+    min_y: -8.0
+    max_z: 2.0     # exclude points above 2 m (sky, branches, signage)
+    min_z: -10.0
+    negative: false
+    processing_time_threshold_sec: 0.05

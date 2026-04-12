@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+    # Pass-through filter that keeps only points roughly above the ground and
+    # roughly within the bus's horizontal field of view. Acts as a
+    # poor-man's ground filter for the crowd-matching PoC. Coordinates are
+    # in base_link frame (so x is forward, y is left, z is up).
+    input_frame: "base_link"
+    output_frame: "base_link"
+    min_x: -5.0
+    max_x: 30.0
+    min_y: -8.0
+    max_y: 8.0
+    min_z: 0.3     # drop points within 30 cm of base_link (ground)
+    max_z: 2.0     # drop points above 2 m (sky / overhanging foliage)
+    negative: false
