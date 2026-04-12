@@ -216,6 +216,7 @@ ros2 launch autoware_launch nuway_simulator.launch.xml \
     data_path:=/autoware_data \
     use_sim_time:=true \
     localization:=false \
+    perception:=false \
     rviz:=true
 
 # === Cleanup ===
