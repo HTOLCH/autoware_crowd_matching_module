@@ -70,7 +70,7 @@ case "$PERCEPTION_MODE" in
         ;;
 esac
 
-MAP_PATH="/autoware_map_sfm"
+MAP_PATH="${MAP_PATH:-/autoware_map_sfm}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/configs/$CONFIG"
 DIAG_DIR="/workspace/install/autoware_launch/share/autoware_launch/config/system/diagnostics"
@@ -245,6 +245,18 @@ else
     echo "[7] Skipping in-container perception ($PERCEPTION_MODE mode — perception comes from elsewhere)"
 fi
 
+# 7e. Fake occupancy grid (only when perception is not full cuda stack).
+# behavior_path_planner waits for /perception/occupancy_grid_map/map before
+# producing a trajectory. The full perception_cuda stack publishes this;
+# perception_minimal + none do not. This publisher fills the gap in sim.
+FAKE_GRID_PID=""
+if [ "$PERCEPTION_MODE" != "cuda" ]; then
+    echo "[7e] Starting fake occupancy grid publisher (sim perception bypass)..."
+    python3 "$SCRIPT_DIR/fake_occupancy_grid.py" &
+    FAKE_GRID_PID=$!
+    echo "    Fake grid PID: $FAKE_GRID_PID"
+fi
+
 # Give relays a moment to start
 sleep 1
 
@@ -280,8 +292,10 @@ echo "[8] Setting post-launch params (will apply once controller starts)..."
 # (-1.68, 0, 0) which maps to ROS (0.0, 1.68, 0.0) modulo MgrsPosition offset.
 # Override via INITIAL_POSE_X/Y/YAW env vars if Harry's MapOrigin is non-zero.
 if [ "$LOCALIZATION_MODE" = "ndt" ]; then
+    # Ground-truth verified spawn position (AWSIM sets y=2.53, not 1.68 as
+    # Unity's -1.68 X would suggest — there's a sensor/base_link offset).
     INITIAL_POSE_X="${INITIAL_POSE_X:-0.0}"
-    INITIAL_POSE_Y="${INITIAL_POSE_Y:-1.68}"
+    INITIAL_POSE_Y="${INITIAL_POSE_Y:-2.53}"
     INITIAL_POSE_YAW="${INITIAL_POSE_YAW:-0.0}"
     echo "[8b] Will publish /initialpose at ($INITIAL_POSE_X, $INITIAL_POSE_Y) yaw=$INITIAL_POSE_YAW after Autoware starts..."
     (sleep 25 && ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
@@ -308,6 +322,7 @@ echo "Shutting down..."
 [ -n "$OBJ_RELAY_PID" ]      && kill $OBJ_RELAY_PID 2>/dev/null || true
 [ -n "$PERCEPTION_MIN_PID" ] && kill $PERCEPTION_MIN_PID 2>/dev/null || true
 [ -n "$CONCAT_RELAY_PID" ]   && kill $CONCAT_RELAY_PID 2>/dev/null || true
+[ -n "$FAKE_GRID_PID" ]      && kill $FAKE_GRID_PID 2>/dev/null || true
 # Restore original configs
 if [ -f "$DIAG_DIR/autoware-awsim.yaml.bak" ]; then
     mv "$DIAG_DIR/autoware-awsim.yaml.bak" "$DIAG_DIR/autoware-awsim.yaml"
