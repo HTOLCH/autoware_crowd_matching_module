@@ -14,8 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/demo.gif" width="620" alt="Crowd-matching velocity planning in AWSIM simulation">
-  <br><i>The shuttle matching co-flow pedestrian speed on a shared campus path (AWSIM / Autoware).</i>
+  <img src="docs/media/demo.gif" width="820" alt="Crowd-matching velocity planning in AWSIM simulation">
+  <br><i>Left: RViz — lidar returns, tracked pedestrians and the live co-flow speed readout.
+  Right: AWSIM — the shuttle matching crowd speed on a shared path.</i>
+  <br><a href="docs/media/demo_full.mp4">▶ Full 43-second clip (MP4)</a>
 </p>
 
 Developed for the **nUWAy campus shuttle** as part of my Master's thesis at the University of Western
